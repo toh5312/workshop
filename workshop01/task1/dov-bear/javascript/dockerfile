@@ -1,0 +1,21 @@
+FROM node:26-bookworm
+LABEL name=task1-bear
+WORKDIR /app
+COPY package.json .
+COPY package-lock.jason .
+COPY main.js .
+COPY public public
+COPY views views
+
+RUN npm ci
+
+ENV APP_PORT=3000
+INSTANCE_NAME=""
+INSTANCE_HASH=""
+
+EXPOSE ${APP_PORT}
+
+SHELL [ "/bin/sh", "-c" ]
+
+ENTRYPOINT node main.js ${APP_PORT}
+
