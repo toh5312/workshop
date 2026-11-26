@@ -1,0 +1,138 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: workshop04
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rustfs-config
+  namespace: workshop04
+data:
+  RUSTFS_ADDRESS: "0.0.0.0:9000"
+  RUSTFS_CONSOLE_ADDRESS: "0.0.0.0:9001"
+  RUSTFS_CONSOLE_ENABLE: "true"
+  RUSTFS_VOLUMES: "http://rustfs-{0...2}.rustfs-hl.workshop04.svc.cluster.local:9000/data"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: rustfs-secret
+  namespace: workshop04
+type: Opaque
+stringData:
+  RUSTFS_ACCESS_KEY: admin
+  RUSTFS_SECRET_KEY: adminadmin1234
+---
+# Headless service: gives each pod a stable DNS name (rustfs-0, rustfs-1, rustfs-2)
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-hl
+  namespace: workshop04
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true   # nodes must find each other before they are Ready
+  selector:
+    app: rustfs
+  ports:
+  - name: s3
+    port: 9000
+  - name: console
+    port: 9001
+---
+# Regular service for the HTTPRoute
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs-svc
+  namespace: workshop04
+spec:
+  type: ClusterIP
+  selector:
+    app: rustfs
+  ports:
+  - name: s3
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: rustfs
+  namespace: workshop04
+spec:
+  serviceName: rustfs-hl
+  replicas: 3
+  podManagementPolicy: Parallel    # start all 3 together so they can find each other
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      securityContext:
+        fsGroup: 10001
+      containers:
+      - name: rustfs
+        image: rustfs/rustfs
+        ports:
+        - containerPort: 9000
+          name: s3
+        - containerPort: 9001
+          name: console
+        envFrom:
+        - configMapRef:
+            name: rustfs-config
+        - secretRef:
+            name: rustfs-secret
+        resources:
+          requests:
+            cpu: 200m
+            memory: 250Mi
+          limits:
+            cpu: 200m
+            memory: 250Mi
+        volumeMounts:
+        - name: data
+          mountPath: /data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
+---
+# Gateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rustfs-httproute
+  namespace: workshop04
+spec:
+  parentRefs:
+  - name: my-gateway
+    namespace: default
+  rules:
+  - matches:
+    - headers:
+      - name: Host
+        value: data.<gateway-ip>.nip.io
+    backendRefs:
+    - name: rustfs-svc
+      port: 9000
+  - matches:
+    - headers:
+      - name: Host
+        value: console.<gateway-ip>.nip.io
+    backendRefs:
+    - name: rustfs-svc
+      port: 9001
